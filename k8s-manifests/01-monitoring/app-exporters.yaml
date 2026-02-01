@@ -1,0 +1,109 @@
+# Postgres Exporter Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: n8n-prod
+  labels:
+    app: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.15.0
+        ports:
+        - containerPort: 9187
+          name: metrics
+        env:
+        - name: DATA_SOURCE_NAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-exporter-secret
+              key: DATA_SOURCE_NAME
+        resources:
+          limits:
+            memory: 64Mi
+            cpu: 100m
+          requests:
+            memory: 32Mi
+            cpu: 50m
+---
+# Postgres Exporter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: n8n-prod
+  labels:
+    app: postgres-exporter
+spec:
+  ports:
+  - port: 9187
+    targetPort: 9187
+    name: metrics
+  selector:
+    app: postgres-exporter
+---
+# Redis Exporter Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: n8n-prod
+  labels:
+    app: redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-exporter
+  template:
+    metadata:
+      labels:
+        app: redis-exporter
+    spec:
+      containers:
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.58.0-alpine
+        ports:
+        - containerPort: 9121
+          name: metrics
+        env:
+        - name: REDIS_ADDR
+          value: "redis:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: REDIS_PASSWORD
+        resources:
+          limits:
+            memory: 64Mi
+            cpu: 100m
+          requests:
+            memory: 32Mi
+            cpu: 50m
+---
+# Redis Exporter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: n8n-prod
+  labels:
+    app: redis-exporter
+spec:
+  ports:
+  - port: 9121
+    targetPort: 9121
+    name: metrics
+  selector:
+    app: redis-exporter

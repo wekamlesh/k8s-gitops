@@ -1,0 +1,193 @@
+# 1. Sync DB Secrets from Doppler
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: db-secrets
+  namespace: n8n-prod
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: doppler-cluster-store
+    kind: ClusterSecretStore
+  target:
+    name: db-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: POSTGRES_PASSWORD
+    remoteRef:
+      key: POSTGRES_PASSWORD
+  - secretKey: POSTGRES_USER
+    remoteRef:
+      key: POSTGRES_USER
+  - secretKey: POSTGRES_DB
+    remoteRef:
+      key: POSTGRES_DB
+  - secretKey: REDIS_PASSWORD
+    remoteRef:
+      key: REDIS_PASSWORD
+
+---
+# 2. Postgres PVC (must be created before Deployment)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: n8n-prod
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# 3. Postgres Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: n8n-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+      annotations:
+        backup.velero.io/backup-volumes: postgres-data
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_USER
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+# 4. Postgres Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: n8n-prod
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+
+---
+# 5. Redis PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: n8n-prod
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# 6. Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: n8n-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+      annotations:
+        backup.velero.io/backup-volumes: redis-data
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        - --appendonly
+        - "yes"
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc
+
+---
+# 7. Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: n8n-prod
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379

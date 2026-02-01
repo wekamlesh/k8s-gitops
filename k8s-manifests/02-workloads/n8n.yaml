@@ -1,0 +1,143 @@
+# 1. Sync N8N Secrets
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: n8n-secrets
+  namespace: n8n-prod
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: doppler-cluster-store
+    kind: ClusterSecretStore
+  target:
+    name: n8n-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: N8N_ENCRYPTION_KEY
+    remoteRef:
+      key: N8N_ENCRYPTION_KEY
+
+---
+# 2. n8n PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-pvc
+  namespace: n8n-prod
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+# 3. n8n Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n
+  namespace: n8n-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: n8n
+  template:
+    metadata:
+      labels:
+        app: n8n
+      annotations:
+        backup.velero.io/backup-volumes: n8n-data
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:16-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -p 5432 -U postgres; do
+            echo "Waiting for postgres...";
+            sleep 2;
+          done
+      containers:
+      - name: n8n
+        image: n8nio/n8n:latest
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: DB_TYPE
+          value: postgresdb
+        - name: DB_POSTGRESDB_HOST
+          value: postgres
+        - name: DB_POSTGRESDB_PORT
+          value: "5432"
+        - name: DB_POSTGRESDB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_USER
+        - name: DB_POSTGRESDB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_PASSWORD
+        - name: DB_POSTGRESDB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_DB
+        - name: N8N_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: N8N_ENCRYPTION_KEY
+        - name: N8N_HOST
+          value: n8n.kamleshmerugu.me
+        - name: WEBHOOK_URL
+          value: https://n8n.kamleshmerugu.me/
+        - name: N8N_PORT
+          value: "5678"
+        - name: N8N_PROTOCOL
+          value: https
+        - name: EXECUTIONS_MODE
+          value: queue
+        - name: QUEUE_BULL_REDIS_HOST
+          value: redis
+        - name: QUEUE_BULL_REDIS_PORT
+          value: "6379"
+        - name: QUEUE_BULL_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 5678
+          name: http
+        volumeMounts:
+        - name: n8n-data
+          mountPath: /home/node/.n8n
+      volumes:
+      - name: n8n-data
+        persistentVolumeClaim:
+          claimName: n8n-pvc
+
+---
+# 4. n8n Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n
+  namespace: n8n-prod
+spec:
+  selector:
+    app: n8n
+  ports:
+  - port: 5678
+    targetPort: 5678

@@ -1,0 +1,17 @@
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Credentials (just in case)
+token.txt
+doppler-token.txt
+credentials-velero
+
+# Editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
